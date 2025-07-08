@@ -6,26 +6,8 @@ export const CONTRACTS = {
   CHALLENGE_MANAGER: process.env.NEXT_PUBLIC_CHALLENGE_MANAGER_ADDRESS || "0x0000000000000000000000000000000000000000",
 }
 
-// 🎯 ZORA NETWORK CONFIGURATION (RECOMMENDED)
+// 🎯 TESTNET DEPLOYMENT CHAINS
 export const DEPLOYMENT_CHAINS = {
-  ZORA_MAINNET: {
-    chainId: 7777777,
-    name: "Zora Network",
-    rpcUrl: "https://rpc.zora.energy",
-    blockExplorer: "https://explorer.zora.energy",
-    nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-    isRecommended: true,
-    features: ["Zora Protocol", "Creator Tools", "Low Fees", "Zora Coins SDK"],
-  },
-  ZORA_SEPOLIA: {
-    chainId: 999999999,
-    name: "Zora Sepolia Testnet",
-    rpcUrl: "https://sepolia.rpc.zora.energy",
-    blockExplorer: "https://sepolia.explorer.zora.energy",
-    nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-    isTestnet: true,
-    features: ["Zora Protocol", "Creator Tools", "Testing Environment"],
-  },
   BASE_SEPOLIA: {
     chainId: 84532,
     name: "Base Sepolia",
@@ -33,11 +15,33 @@ export const DEPLOYMENT_CHAINS = {
     blockExplorer: "https://sepolia.basescan.org",
     nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
     isTestnet: true,
-    features: ["ZORA Token (Spring 2025)", "Coinbase Ecosystem"],
+    features: ["Zora Coins SDK", "Free Testnet ETH", "Same as Mainnet"],
+    isRecommended: true,
+    faucet: "https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet",
+  },
+  ZORA_SEPOLIA: {
+    chainId: 999999999,
+    name: "Zora Sepolia Testnet", 
+    rpcUrl: "https://sepolia.rpc.zora.energy",
+    blockExplorer: "https://sepolia.explorer.zora.energy",
+    nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+    isTestnet: true,
+    features: ["Native Zora Network", "Creator Tools", "Testing Environment"],
+    faucet: "Bridge from Base Sepolia",
+  },
+  ETHEREUM_SEPOLIA: {
+    chainId: 11155111,
+    name: "Ethereum Sepolia",
+    rpcUrl: "https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161",
+    blockExplorer: "https://sepolia.etherscan.io",
+    nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+    isTestnet: true,
+    features: ["Most Compatible", "Widely Supported", "Bridge to other testnets"],
+    faucet: "https://sepoliafaucet.com/",
   },
 }
 
-// Enhanced ABIs with Zora integration
+// Enhanced ABIs
 export const VIBE_TOKEN_ABI = [
   "function mintVibeToken(address to, string title, string description, string ipfsHash, uint256 initialPrice) external returns (uint256)",
   "function updateEngagement(uint256 tokenId, uint256 likes, uint256 shares) external",
@@ -46,13 +50,7 @@ export const VIBE_TOKEN_ABI = [
   "function getVibeMetadata(uint256 tokenId) external view returns (tuple(string title, string description, string ipfsHash, address creator, uint256 createdAt, uint256 totalLikes, uint256 totalShares, bool isActive))",
   "function getCurrentPrice(uint256 tokenId) external view returns (uint256)",
   "function balanceOf(address account, uint256 id) external view returns (uint256)",
-  // Zora Protocol integration
-  "function mintToZoraProtocol(address to, string tokenURI, uint256 quantity) external returns (uint256)",
-  "function setZoraProtocolAddress(address zoraProtocol) external",
-  "function getZoraTokenId(uint256 vibeTokenId) external view returns (uint256)",
-  // Events
   "event VibeTokenMinted(uint256 indexed tokenId, address indexed creator, string ipfsHash)",
-  "event ZoraMinted(uint256 indexed vibeTokenId, uint256 indexed zoraTokenId, address creator)",
   "event PriceUpdated(uint256 indexed tokenId, uint256 newPrice)",
   "event EngagementUpdated(uint256 indexed tokenId, uint256 likes, uint256 shares)",
   "event AccessGranted(address indexed user, uint256 indexed tokenId)",
@@ -69,44 +67,41 @@ export const CHALLENGE_MANAGER_ABI = [
   "function getSubmission(uint256 submissionId) external view returns (tuple(uint256 id, uint256 challengeId, address submitter, string ipfsHash, string title, uint256 likes, uint256 votes, uint256 timestamp))",
   "function getChallengeSubmissions(uint256 challengeId) external view returns (uint256[])",
   "function getUserVibePoints(address user) external view returns (uint256)",
-  // Zora integration
-  "function setZoraProtocolAddress(address zoraProtocol) external",
-  "function mintWinnerToZora(uint256 challengeId) external",
-  // Events
   "event ChallengeCreated(uint256 indexed challengeId, string title)",
   "event SubmissionCreated(uint256 indexed submissionId, uint256 indexed challengeId, address submitter)",
   "event VoteCast(uint256 indexed submissionId, address voter)",
   "event ChallengeCompleted(uint256 indexed challengeId, uint256 winnerTokenId)",
   "event VibePointsAwarded(address indexed user, uint256 amount, string reason)",
-  "event ZoraMintTriggered(uint256 indexed challengeId, uint256 indexed zoraTokenId)",
 ]
 
 export class BlockchainService {
-  private provider: ethers.providers.Web3Provider | null = null
-  private signer: ethers.Signer | null = null
+  private provider: ethers.BrowserProvider | null = null
+  private signer: ethers.JsonRpcSigner | null = null
   private vibeTokenContract: ethers.Contract | null = null
   private challengeManagerContract: ethers.Contract | null = null
 
   async connect() {
     if (typeof window !== "undefined" && window.ethereum) {
       try {
-        this.provider = new ethers.providers.Web3Provider(window.ethereum)
+        this.provider = new ethers.BrowserProvider(window.ethereum)
         await this.provider.send("eth_requestAccounts", [])
-        this.signer = this.provider.getSigner()
+        this.signer = await this.provider.getSigner()
 
         const network = await this.provider.getNetwork()
-        console.log("Connected to network:", network.name, network.chainId)
+        console.log("Connected to network:", network.name, Number(network.chainId))
 
-        // Check if we're on Zora Network
-        if (network.chainId === 7777777) {
-          console.log("🎉 Connected to Zora Mainnet - Perfect for creator tools!")
-        } else if (network.chainId === 999999999) {
-          console.log("🧪 Connected to Zora Sepolia - Great for testing!")
+        // Check if we're on recommended testnet
+        if (Number(network.chainId) === 84532) {
+          console.log("🧪 Connected to Base Sepolia - Perfect for testnet development!")
+        } else if (Number(network.chainId) === 999999999) {
+          console.log("🎨 Connected to Zora Sepolia - Great for creator tools testing!")
+        } else if (Number(network.chainId) === 11155111) {
+          console.log("⚡ Connected to Ethereum Sepolia - Universal testnet!")
         } else {
-          console.log("⚠️ Consider switching to Zora Network for optimal experience")
+          console.log("⚠️ Consider switching to Base Sepolia for optimal testnet experience")
         }
 
-        // Initialize contracts
+        // Initialize contracts if deployed
         if (CONTRACTS.VIBE_TOKEN !== "0x0000000000000000000000000000000000000000") {
           this.vibeTokenContract = new ethers.Contract(CONTRACTS.VIBE_TOKEN, VIBE_TOKEN_ABI, this.signer)
           console.log("✅ VibeToken contract connected:", CONTRACTS.VIBE_TOKEN)
@@ -130,10 +125,10 @@ export class BlockchainService {
     return false
   }
 
-  async switchToZoraNetwork(testnet = false) {
+  async switchToBaseSepolia() {
     if (!window.ethereum) return false
 
-    const targetChain = testnet ? DEPLOYMENT_CHAINS.ZORA_SEPOLIA : DEPLOYMENT_CHAINS.ZORA_MAINNET
+    const targetChain = DEPLOYMENT_CHAINS.BASE_SEPOLIA
 
     try {
       await window.ethereum.request({
@@ -159,42 +154,12 @@ export class BlockchainService {
           })
           return true
         } catch (addError) {
-          console.error("Failed to add Zora network:", addError)
+          console.error("Failed to add Base Sepolia network:", addError)
           return false
         }
       }
       return false
     }
-  }
-
-  // Enhanced methods with Zora integration
-  async mintVibeTokenWithZora(to: string, title: string, description: string, ipfsHash: string, initialPrice: string) {
-    if (!this.vibeTokenContract) throw new Error("Contract not connected")
-
-    // First mint the vibe token
-    const tx = await this.vibeTokenContract.mintVibeToken(
-      to,
-      title,
-      description,
-      ipfsHash,
-      ethers.utils.parseEther(initialPrice),
-    )
-
-    const receipt = await tx.wait()
-
-    // If on Zora network, also mint to Zora Protocol
-    const network = await this.provider!.getNetwork()
-    if (network.chainId === 7777777 || network.chainId === 999999999) {
-      try {
-        // This would integrate with Zora's minting protocol
-        console.log("🎨 Minting to Zora Protocol for enhanced discoverability...")
-        // Implementation would use Zora's SDK here
-      } catch (error) {
-        console.log("Zora Protocol minting failed, but vibe token created successfully")
-      }
-    }
-
-    return receipt
   }
 
   async submitToChallenge(challengeId: number, ipfsHash: string, title: string) {
@@ -224,7 +189,7 @@ export class BlockchainService {
     }
 
     const tx = await this.vibeTokenContract.purchaseAccess(tokenId, {
-      value: ethers.utils.parseEther(price),
+      value: ethers.parseEther(price),
     })
 
     return await tx.wait()
@@ -235,7 +200,7 @@ export class BlockchainService {
 
     try {
       const points = await this.challengeManagerContract.getUserVibePoints(address)
-      return points.toNumber()
+      return Number(points)
     } catch (error) {
       console.error("Error fetching vibe points:", error)
       return 0
@@ -247,7 +212,7 @@ export class BlockchainService {
 
     try {
       const price = await this.vibeTokenContract.getCurrentPrice(tokenId)
-      return ethers.utils.formatEther(price)
+      return ethers.formatEther(price)
     } catch (error) {
       console.error("Error fetching token price:", error)
       return "0"
@@ -265,25 +230,34 @@ export class BlockchainService {
     }
   }
 
-  getAddress(): Promise<string> | null {
-    return this.signer?.getAddress() || null
+  async getAddress(): Promise<string | null> {
+    if (!this.signer) return null
+    try {
+      return await this.signer.getAddress()
+    } catch (error) {
+      console.error("Error getting address:", error)
+      return null
+    }
   }
 
   isConnected(): boolean {
     return this.signer !== null
   }
 
-  getRecommendedChain(): string {
-    return "Zora Network (Optimal for creator tools and Zora Protocol integration)"
-  }
-
   async getCurrentNetwork() {
     if (!this.provider) return null
-    const network = await this.provider.getNetwork()
-    return {
-      chainId: network.chainId,
-      name: network.name,
-      isZora: network.chainId === 7777777 || network.chainId === 999999999,
+    try {
+      const network = await this.provider.getNetwork()
+      return {
+        chainId: Number(network.chainId),
+        name: network.name,
+        isBaseSepolia: Number(network.chainId) === 84532,
+        isZoraSepolia: Number(network.chainId) === 999999999,
+        isTestnet: [84532, 999999999, 11155111].includes(Number(network.chainId)),
+      }
+    } catch (error) {
+      console.error("Error getting network:", error)
+      return null
     }
   }
 }

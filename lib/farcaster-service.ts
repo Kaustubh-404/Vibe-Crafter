@@ -40,9 +40,24 @@ class RealFarcasterService {
   private baseUrl = "/api/farcaster"
   private cache = new Map()
   private cacheTimeout = 5 * 60 * 1000 // 5 minutes
+  private retryCount = 3
+  private retryDelay = 1000
 
-  private getCacheKey(key: string): string {
-    return `${key}_${Date.now()}`
+  private async fetchWithRetry(url: string, options?: RequestInit, retries = this.retryCount): Promise<Response> {
+    try {
+      const response = await fetch(url, options)
+      if (!response.ok && retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay))
+        return this.fetchWithRetry(url, options, retries - 1)
+      }
+      return response
+    } catch (error) {
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay))
+        return this.fetchWithRetry(url, options, retries - 1)
+      }
+      throw error
+    }
   }
 
   private isValidCache(timestamp: number): boolean {
@@ -58,7 +73,8 @@ class RealFarcasterService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/user/${fid}`)
+      const response = await this.fetchWithRetry(`${this.baseUrl}/user/${fid}`)
+      
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -71,14 +87,15 @@ class RealFarcasterService {
       this.cache.set(cacheKey, { data: result.data, timestamp: Date.now() })
       return result.data
     } catch (error) {
-      console.error("Error fetching user:", error)
-      throw error
+      console.error(`Error fetching user ${fid}:`, error)
+      throw new Error(`Failed to fetch user data for FID ${fid}`)
     }
   }
 
   async getUserCasts(fid: number, limit = 25): Promise<FarcasterCast[]> {
     try {
-      const response = await fetch(`${this.baseUrl}/casts/${fid}?limit=${limit}`)
+      const response = await this.fetchWithRetry(`${this.baseUrl}/casts/${fid}?limit=${limit}`)
+      
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -90,14 +107,15 @@ class RealFarcasterService {
 
       return result.data
     } catch (error) {
-      console.error("Error fetching user casts:", error)
-      throw error
+      console.error(`Error fetching casts for user ${fid}:`, error)
+      throw new Error(`Failed to fetch casts for user ${fid}`)
     }
   }
 
   async getUserInterests(fid: number): Promise<UserInterests> {
     try {
-      const response = await fetch(`${this.baseUrl}/interests/${fid}`)
+      const response = await this.fetchWithRetry(`${this.baseUrl}/interests/${fid}`)
+      
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -109,20 +127,28 @@ class RealFarcasterService {
 
       return result.data.interests
     } catch (error) {
-      console.error("Error fetching user interests:", error)
-      // Return default interests on error
+      console.error(`Error fetching interests for user ${fid}:`, error)
+      // Return minimal default instead of mock data
       return {
-        topics: ["crypto", "web3"],
-        channels: ["general"],
+        topics: [],
+        channels: [],
         engagementScore: 0,
-        categories: { general: 1 },
+        categories: {},
       }
     }
   }
 
   async getTrendingCasts(limit = 50): Promise<FarcasterCast[]> {
+    const cacheKey = `trending_${limit}`
+    const cached = this.cache.get(cacheKey)
+
+    if (cached && this.isValidCache(cached.timestamp)) {
+      return cached.data
+    }
+
     try {
-      const response = await fetch(`${this.baseUrl}/trending?limit=${limit}`)
+      const response = await this.fetchWithRetry(`${this.baseUrl}/trending?limit=${limit}`)
+      
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -132,16 +158,32 @@ class RealFarcasterService {
         throw new Error(result.error || "Failed to fetch trending casts")
       }
 
-      return result.data
+      // Validate the data structure
+      const validCasts = result.data.filter((cast: any) => 
+        cast.hash && 
+        cast.author && 
+        cast.text && 
+        cast.reactions
+      )
+
+      this.cache.set(cacheKey, { data: validCasts, timestamp: Date.now() })
+      return validCasts
     } catch (error) {
       console.error("Error fetching trending casts:", error)
-      throw error
+      throw new Error("Failed to fetch trending content from Farcaster")
     }
   }
 
   async searchCasts(query: string, limit = 25): Promise<FarcasterCast[]> {
+    if (!query.trim()) {
+      throw new Error("Search query cannot be empty")
+    }
+
     try {
-      const response = await fetch(`${this.baseUrl}/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+      const response = await this.fetchWithRetry(
+        `${this.baseUrl}/search?q=${encodeURIComponent(query)}&limit=${limit}`
+      )
+      
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -153,19 +195,23 @@ class RealFarcasterService {
 
       return result.data
     } catch (error) {
-      console.error("Error searching casts:", error)
-      throw error
+      console.error(`Error searching casts for "${query}":`, error)
+      throw new Error(`Failed to search for "${query}"`)
     }
   }
 
   async publishCast(text: string, embeds?: string[]): Promise<boolean> {
+    if (!text.trim()) {
+      throw new Error("Cast text cannot be empty")
+    }
+
     try {
-      const response = await fetch(`${this.baseUrl}/publish`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/publish`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ text, embeds }),
+        body: JSON.stringify({ text: text.trim(), embeds }),
       })
 
       if (!response.ok) {
@@ -177,6 +223,30 @@ class RealFarcasterService {
     } catch (error) {
       console.error("Error publishing cast:", error)
       return false
+    }
+  }
+
+  // Health check method
+  async checkApiHealth(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/health`)
+      return response.ok
+    } catch (error) {
+      console.error("API health check failed:", error)
+      return false
+    }
+  }
+
+  // Clear cache method
+  clearCache(): void {
+    this.cache.clear()
+  }
+
+  // Get cache statistics
+  getCacheStats(): { size: number; keys: string[] } {
+    return {
+      size: this.cache.size,
+      keys: Array.from(this.cache.keys())
     }
   }
 }
