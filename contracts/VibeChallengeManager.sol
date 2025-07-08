@@ -54,7 +54,8 @@ contract VibeChallengeManager is Ownable, ReentrancyGuard {
     event ChallengeCompleted(uint256 indexed challengeId, uint256 winnerTokenId);
     event VibePointsAwarded(address indexed user, uint256 amount, string reason);
     
-    constructor(address _vibeToken) {
+    // Fixed constructor - pass initialOwner to Ownable
+    constructor(address _vibeToken, address _initialOwner) Ownable(_initialOwner) {
         vibeToken = VibeToken(_vibeToken);
     }
     

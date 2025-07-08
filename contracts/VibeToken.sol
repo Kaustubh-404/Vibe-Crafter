@@ -39,7 +39,11 @@ contract VibeToken is ERC1155, Ownable, ReentrancyGuard {
     event EngagementUpdated(uint256 indexed tokenId, uint256 likes, uint256 shares);
     event AccessGranted(address indexed user, uint256 indexed tokenId);
     
-    constructor(string memory uri, address _feeRecipient) ERC1155(uri) {
+    // Fixed constructor - renamed parameter to avoid shadowing and pass initialOwner to Ownable
+    constructor(string memory _uri, address _feeRecipient, address _initialOwner) 
+        ERC1155(_uri) 
+        Ownable(_initialOwner) 
+    {
         feeRecipient = _feeRecipient;
     }
     
@@ -49,7 +53,7 @@ contract VibeToken is ERC1155, Ownable, ReentrancyGuard {
         string memory description,
         string memory ipfsHash,
         uint256 initialPrice
-    ) external returns (uint256) {
+    ) external onlyOwner returns (uint256) {
         _tokenIds.increment();
         uint256 newTokenId = _tokenIds.current();
         
@@ -104,7 +108,11 @@ contract VibeToken is ERC1155, Ownable, ReentrancyGuard {
         payable(feeRecipient).transfer(platformFee);
         payable(vibeMetadata[tokenId].creator).transfer(creatorFee);
         
-        // Remaining goes to liquidity pool (simplified)
+        // Send remaining to contract for liquidity pool (simplified implementation)
+        // In production, this would go to a proper liquidity pool or treasury
+        if (remaining > 0) {
+            // Keep remaining in contract for now - could be withdrawn by owner for liquidity
+        }
         
         emit AccessGranted(msg.sender, tokenId);
     }
@@ -125,7 +133,25 @@ contract VibeToken is ERC1155, Ownable, ReentrancyGuard {
         feeRecipient = _feeRecipient;
     }
     
-    function uri(uint256 tokenId) public view override returns (string memory) {
+    // Function to withdraw accumulated liquidity funds (from remaining payments)
+    function withdrawLiquidityFunds(address payable to, uint256 amount) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
+        require(amount <= address(this).balance, "Insufficient contract balance");
+        to.transfer(amount);
+    }
+    
+    // Function to check contract balance
+    function getContractBalance() external view returns (uint256) {
+        return address(this).balance;
+    }
+    
+    // Override uri function with different name to avoid shadowing
+    function tokenURI(uint256 tokenId) public view returns (string memory) {
         return string(abi.encodePacked("https://gateway.pinata.cloud/ipfs/", vibeMetadata[tokenId].ipfsHash));
+    }
+    
+    // Keep the original uri function for ERC1155 compatibility
+    function uri(uint256 tokenId) public view override returns (string memory) {
+        return tokenURI(tokenId);
     }
 }
