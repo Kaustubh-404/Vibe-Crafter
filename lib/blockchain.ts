@@ -1,3 +1,5 @@
+
+
 import { ethers } from "ethers"
 
 // Contract addresses - UPDATE THESE AFTER DEPLOYMENT
@@ -79,16 +81,26 @@ export class BlockchainService {
   private signer: ethers.JsonRpcSigner | null = null
   private vibeTokenContract: ethers.Contract | null = null
   private challengeManagerContract: ethers.Contract | null = null
+  private userAddress: string | null = null
 
-  async connect() {
+  async connect(): Promise<boolean> {
     if (typeof window !== "undefined" && window.ethereum) {
       try {
+        console.log("🔗 Connecting to wallet...")
         this.provider = new ethers.BrowserProvider(window.ethereum)
-        await this.provider.send("eth_requestAccounts", [])
+        
+        // Request account access
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" })
+        if (accounts.length === 0) {
+          throw new Error("No accounts found")
+        }
+
         this.signer = await this.provider.getSigner()
+        this.userAddress = await this.signer.getAddress()
 
         const network = await this.provider.getNetwork()
         console.log("Connected to network:", network.name, Number(network.chainId))
+        console.log("Connected address:", this.userAddress)
 
         // Check if we're on recommended testnet
         if (Number(network.chainId) === 84532) {
@@ -102,39 +114,66 @@ export class BlockchainService {
         }
 
         // Initialize contracts if deployed
-        if (CONTRACTS.VIBE_TOKEN !== "0x0000000000000000000000000000000000000000") {
-          this.vibeTokenContract = new ethers.Contract(CONTRACTS.VIBE_TOKEN, VIBE_TOKEN_ABI, this.signer)
-          console.log("✅ VibeToken contract connected:", CONTRACTS.VIBE_TOKEN)
-        }
-
-        if (CONTRACTS.CHALLENGE_MANAGER !== "0x0000000000000000000000000000000000000000") {
-          this.challengeManagerContract = new ethers.Contract(
-            CONTRACTS.CHALLENGE_MANAGER,
-            CHALLENGE_MANAGER_ABI,
-            this.signer,
-          )
-          console.log("✅ ChallengeManager contract connected:", CONTRACTS.CHALLENGE_MANAGER)
-        }
+        await this.initializeContracts()
 
         return true
       } catch (error) {
         console.error("Failed to connect to wallet:", error)
+        this.cleanup()
         return false
       }
     }
+    console.error("MetaMask not found")
     return false
   }
 
-  async switchToBaseSepolia() {
+  private async initializeContracts(): Promise<void> {
+    if (!this.signer) return
+
+    try {
+      if (CONTRACTS.VIBE_TOKEN !== "0x0000000000000000000000000000000000000000") {
+        this.vibeTokenContract = new ethers.Contract(CONTRACTS.VIBE_TOKEN, VIBE_TOKEN_ABI, this.signer)
+        console.log("✅ VibeToken contract connected:", CONTRACTS.VIBE_TOKEN)
+      } else {
+        console.log("⚠️ VibeToken contract address not set")
+      }
+
+      if (CONTRACTS.CHALLENGE_MANAGER !== "0x0000000000000000000000000000000000000000") {
+        this.challengeManagerContract = new ethers.Contract(
+          CONTRACTS.CHALLENGE_MANAGER,
+          CHALLENGE_MANAGER_ABI,
+          this.signer,
+        )
+        console.log("✅ ChallengeManager contract connected:", CONTRACTS.CHALLENGE_MANAGER)
+      } else {
+        console.log("⚠️ ChallengeManager contract address not set")
+      }
+    } catch (error) {
+      console.error("Failed to initialize contracts:", error)
+    }
+  }
+
+  private cleanup(): void {
+    this.provider = null
+    this.signer = null
+    this.vibeTokenContract = null
+    this.challengeManagerContract = null
+    this.userAddress = null
+  }
+
+  async switchToZoraNetwork(isTestnet = true): Promise<boolean> {
     if (!window.ethereum) return false
 
-    const targetChain = DEPLOYMENT_CHAINS.BASE_SEPOLIA
+    const targetChain = isTestnet ? DEPLOYMENT_CHAINS.ZORA_SEPOLIA : DEPLOYMENT_CHAINS.BASE_SEPOLIA
 
     try {
       await window.ethereum.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: `0x${targetChain.chainId.toString(16)}` }],
       })
+      
+      // Reconnect after switching
+      await this.connect()
       return true
     } catch (switchError: any) {
       // If network doesn't exist, add it
@@ -152,55 +191,85 @@ export class BlockchainService {
               },
             ],
           })
+          
+          // Reconnect after adding
+          await this.connect()
           return true
         } catch (addError) {
-          console.error("Failed to add Base Sepolia network:", addError)
+          console.error("Failed to add network:", addError)
           return false
         }
       }
+      console.error("Failed to switch network:", switchError)
       return false
     }
   }
 
-  async submitToChallenge(challengeId: number, ipfsHash: string, title: string) {
+  async submitToChallenge(challengeId: number, ipfsHash: string, title: string): Promise<any> {
     if (!this.challengeManagerContract) {
       console.log("⚠️ Contract not deployed, simulating submission")
       return { hash: `0x${Math.random().toString(16).substr(2, 64)}` }
     }
 
-    const tx = await this.challengeManagerContract.submitToChallenge(challengeId, ipfsHash, title)
-    return await tx.wait()
+    try {
+      console.log("📝 Submitting to blockchain:", { challengeId, ipfsHash, title })
+      const tx = await this.challengeManagerContract.submitToChallenge(challengeId, ipfsHash, title)
+      const receipt = await tx.wait()
+      console.log("✅ Blockchain submission successful:", receipt.transactionHash)
+      return receipt
+    } catch (error) {
+      console.error("Blockchain submission failed:", error)
+      throw error
+    }
   }
 
-  async voteForSubmission(submissionId: number) {
+  async voteForSubmission(submissionId: number): Promise<any> {
     if (!this.challengeManagerContract) {
       console.log("⚠️ Contract not deployed, simulating vote")
       return { hash: `0x${Math.random().toString(16).substr(2, 64)}` }
     }
 
-    const tx = await this.challengeManagerContract.voteForSubmission(submissionId)
-    return await tx.wait()
+    try {
+      console.log("🗳️ Voting on blockchain:", submissionId)
+      const tx = await this.challengeManagerContract.voteForSubmission(submissionId)
+      const receipt = await tx.wait()
+      console.log("✅ Vote successful:", receipt.transactionHash)
+      return receipt
+    } catch (error) {
+      console.error("Vote failed:", error)
+      throw error
+    }
   }
 
-  async purchaseAccess(tokenId: number, price: string) {
+  async purchaseAccess(tokenId: number, price: string): Promise<any> {
     if (!this.vibeTokenContract) {
       console.log("⚠️ Contract not deployed, simulating purchase")
       return { hash: `0x${Math.random().toString(16).substr(2, 64)}` }
     }
 
-    const tx = await this.vibeTokenContract.purchaseAccess(tokenId, {
-      value: ethers.parseEther(price),
-    })
-
-    return await tx.wait()
+    try {
+      console.log("💰 Purchasing access:", { tokenId, price })
+      const tx = await this.vibeTokenContract.purchaseAccess(tokenId, {
+        value: ethers.parseEther(price),
+      })
+      const receipt = await tx.wait()
+      console.log("✅ Access purchase successful:", receipt.transactionHash)
+      return receipt
+    } catch (error) {
+      console.error("Access purchase failed:", error)
+      throw error
+    }
   }
 
-  async getUserVibePoints(address: string): Promise<number> {
-    if (!this.challengeManagerContract) return 0
+  async getUserVibePoints(address?: string): Promise<number> {
+    const targetAddress = address || this.userAddress
+    if (!this.challengeManagerContract || !targetAddress) return 0
 
     try {
-      const points = await this.challengeManagerContract.getUserVibePoints(address)
-      return Number(points)
+      const points = await this.challengeManagerContract.getUserVibePoints(targetAddress)
+      const pointsNumber = Number(points)
+      console.log("📊 Vibe points from blockchain:", pointsNumber)
+      return pointsNumber
     } catch (error) {
       console.error("Error fetching vibe points:", error)
       return 0
@@ -231,33 +300,73 @@ export class BlockchainService {
   }
 
   async getAddress(): Promise<string | null> {
-    if (!this.signer) return null
-    try {
-      return await this.signer.getAddress()
-    } catch (error) {
-      console.error("Error getting address:", error)
-      return null
-    }
+    return this.userAddress
   }
 
   isConnected(): boolean {
-    return this.signer !== null
+    return this.signer !== null && this.userAddress !== null
   }
 
   async getCurrentNetwork() {
     if (!this.provider) return null
     try {
       const network = await this.provider.getNetwork()
+      const chainId = Number(network.chainId)
       return {
-        chainId: Number(network.chainId),
+        chainId,
         name: network.name,
-        isBaseSepolia: Number(network.chainId) === 84532,
-        isZoraSepolia: Number(network.chainId) === 999999999,
-        isTestnet: [84532, 999999999, 11155111].includes(Number(network.chainId)),
+        isZora: chainId === 999999999,
+        isBaseSepolia: chainId === 84532,
+        isTestnet: [84532, 999999999, 11155111].includes(chainId),
       }
     } catch (error) {
       console.error("Error getting network:", error)
       return null
+    }
+  }
+
+  async getBalance(): Promise<string> {
+    if (!this.provider || !this.userAddress) return "0"
+
+    try {
+      const balance = await this.provider.getBalance(this.userAddress)
+      return ethers.formatEther(balance)
+    } catch (error) {
+      console.error("Error getting balance:", error)
+      return "0"
+    }
+  }
+
+  // Event listeners for wallet changes
+  private accountChangeHandler?: (accounts: string[]) => void
+  private chainChangeHandler?: (chainId: string) => void
+
+  setupEventListeners(onAccountChange?: (accounts: string[]) => void, onChainChange?: (chainId: string) => void) {
+    if (typeof window !== "undefined" && window.ethereum) {
+      // Remove existing listeners first
+      this.removeEventListeners()
+
+      if (onAccountChange) {
+        this.accountChangeHandler = onAccountChange
+        window.ethereum.on("accountsChanged", this.accountChangeHandler)
+      }
+      if (onChainChange) {
+        this.chainChangeHandler = onChainChange
+        window.ethereum.on("chainChanged", this.chainChangeHandler)
+      }
+    }
+  }
+
+  removeEventListeners() {
+    if (typeof window !== "undefined" && window.ethereum) {
+      if (this.accountChangeHandler) {
+        window.ethereum.removeListener("accountsChanged", this.accountChangeHandler)
+        this.accountChangeHandler = undefined
+      }
+      if (this.chainChangeHandler) {
+        window.ethereum.removeListener("chainChanged", this.chainChangeHandler)
+        this.chainChangeHandler = undefined
+      }
     }
   }
 }

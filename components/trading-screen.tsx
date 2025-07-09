@@ -1,3 +1,4 @@
+
 "use client"
 
 import { useState, useEffect } from "react"
@@ -6,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TrendingUp, TrendingDown, Coins, Lock, Unlock, DollarSign } from "lucide-react"
+import { TrendingUp, TrendingDown, Coins, Lock, Unlock, DollarSign, AlertCircle, CheckCircle2, Wallet } from "lucide-react"
 import { useVibeStore } from "@/lib/store"
 import { toast } from "@/hooks/use-toast"
 
@@ -16,23 +17,64 @@ export default function TradingScreen() {
   const [tradeType, setTradeType] = useState<"buy" | "sell">("buy")
   const [loading, setLoading] = useState(false)
 
-  const { zoraCoinMarket, userHoldings, loadZoraCoinMarket, purchaseZoraCoin, sellZoraCoin } = useVibeStore()
+  const { 
+    zoraCoinMarket, 
+    userHoldings, 
+    loadZoraCoinMarket, 
+    purchaseZoraCoin, 
+    sellZoraCoin,
+    vibePoints,
+    isWalletConnected 
+  } = useVibeStore()
 
   useEffect(() => {
     loadZoraCoinMarket()
   }, [loadZoraCoinMarket])
 
   const handleTrade = async () => {
-    if (!selectedCoin || !tradeAmount) return
-
-    const amount = Number.parseFloat(tradeAmount)
-    if (isNaN(amount) || amount <= 0) {
+    if (!selectedCoin || !tradeAmount) {
       toast({
-        title: "Invalid amount",
-        description: "Please enter a valid amount.",
+        title: "Missing information",
+        description: "Please select a coin and enter an amount.",
         variant: "destructive",
       })
       return
+    }
+
+    const amount = parseFloat(tradeAmount)
+    if (isNaN(amount) || amount <= 0) {
+      toast({
+        title: "Invalid amount",
+        description: "Please enter a valid amount greater than 0.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Validation for sell orders
+    if (tradeType === "sell") {
+      const currentHolding = userHoldings[selectedCoin.id] || 0
+      if (amount > currentHolding) {
+        toast({
+          title: "Insufficient balance",
+          description: `You only have ${currentHolding.toFixed(3)} ${selectedCoin.symbol}.`,
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
+    // Validation for buy orders (using VP as currency)
+    if (tradeType === "buy") {
+      const totalCost = amount * selectedCoin.price * 10 // 10 VP per ZORA for demo
+      if (totalCost > vibePoints) {
+        toast({
+          title: "Insufficient Vibe Points",
+          description: `You need ${totalCost.toFixed(1)} VP but only have ${vibePoints.toFixed(1)} VP.`,
+          variant: "destructive",
+        })
+        return
+      }
     }
 
     setLoading(true)
@@ -57,22 +99,12 @@ export default function TradingScreen() {
         }
       }
 
-      if (!success) {
-        toast({
-          title: "Trade failed",
-          description: "Please check your balance and try again.",
-          variant: "destructive",
-        })
-      } else {
+      if (success) {
         setTradeAmount("")
         setSelectedCoin(null)
       }
     } catch (error) {
-      toast({
-        title: "Trade failed",
-        description: "Please try again.",
-        variant: "destructive",
-      })
+      // Error is handled in the store
     } finally {
       setLoading(false)
     }
@@ -89,23 +121,50 @@ export default function TradingScreen() {
     }, 0)
   }
 
+  const getPortfolioHoldings = () => {
+    return Object.entries(userHoldings)
+      .filter(([_, amount]) => amount > 0)
+      .map(([coinId, amount]) => {
+        const coin = zoraCoinMarket.find((c) => c.id === coinId)
+        return {
+          coinId,
+          amount,
+          coin,
+          value: coin ? amount * coin.price : 0
+        }
+      })
+      .sort((a, b) => b.value - a.value)
+  }
+
   return (
     <div className="space-y-6">
       <div className="text-center py-4">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Zora Coin Trading</h2>
         <p className="text-gray-600">Trade tokenized vibes and unlock exclusive content</p>
-        <div className="mt-2">
+        <div className="flex items-center justify-center space-x-4 mt-3">
           <Badge variant="secondary" className="bg-green-100 text-green-700">
-            Portfolio Value: {getPortfolioValue().toFixed(3)} ZORA
+            <Wallet className="w-4 h-4 mr-1" />
+            Portfolio: {getPortfolioValue().toFixed(3)} ZORA
           </Badge>
+          <Badge variant="outline" className="bg-purple-100 text-purple-700">
+            VP: {vibePoints.toFixed(1)}
+          </Badge>
+          {!isWalletConnected && (
+            <Badge variant="destructive">
+              <AlertCircle className="w-4 h-4 mr-1" />
+              Wallet Not Connected
+            </Badge>
+          )}
         </div>
       </div>
 
       <Tabs defaultValue="market" className="w-full">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="market">Market</TabsTrigger>
-          <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
-          <TabsTrigger value="content">Content</TabsTrigger>
+          <TabsTrigger value="portfolio">
+            Portfolio ({getPortfolioHoldings().length})
+          </TabsTrigger>
+          <TabsTrigger value="content">Content Access</TabsTrigger>
         </TabsList>
 
         <TabsContent value="market" className="space-y-4">
@@ -116,7 +175,7 @@ export default function TradingScreen() {
                   <CardContent className="p-6">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <div className="flex items-center space-x-3 mb-2">
+                        <div className="flex items-center space-x-3 mb-3">
                           <div className="w-12 h-12 bg-gradient-to-r from-purple-400 to-indigo-500 rounded-lg flex items-center justify-center">
                             <Coins className="w-6 h-6 text-white" />
                           </div>
@@ -124,9 +183,21 @@ export default function TradingScreen() {
                             <h3 className="font-semibold text-gray-900">{coin.name}</h3>
                             <p className="text-sm text-gray-600">{coin.symbol}</p>
                           </div>
-                          <Badge variant="outline" className="text-green-600 border-green-200">
-                            New
-                          </Badge>
+                          <div className="flex space-x-2">
+                            {coin.isActive ? (
+                              <Badge variant="default" className="bg-green-100 text-green-700">
+                                <CheckCircle2 className="w-3 h-3 mr-1" />
+                                Live
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline">Demo</Badge>
+                            )}
+                            {userHoldings[coin.id] > 0 && (
+                              <Badge variant="secondary">
+                                Owned: {userHoldings[coin.id].toFixed(3)}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
@@ -184,11 +255,15 @@ export default function TradingScreen() {
                               </a>
                             )}
                           </div>
+                          <p className="text-xs text-gray-500 mt-2">by {coin.creator}</p>
                         </div>
                       </div>
 
                       <Button
-                        onClick={() => setSelectedCoin(coin)}
+                        onClick={() => {
+                          setSelectedCoin(coin)
+                          setTradeType("buy")
+                        }}
                         className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700"
                       >
                         Trade
@@ -214,18 +289,25 @@ export default function TradingScreen() {
         <TabsContent value="portfolio" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Your Holdings</CardTitle>
+              <CardTitle className="flex items-center justify-between">
+                <span>Your Holdings</span>
+                <span className="text-lg font-bold text-green-600">
+                  {getPortfolioValue().toFixed(3)} ZORA
+                </span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {Object.keys(userHoldings).length > 0 ? (
+              {getPortfolioHoldings().length > 0 ? (
                 <div className="space-y-4">
-                  {Object.entries(userHoldings).map(([coinId, amount]) => {
-                    const coin = zoraCoinMarket.find((c) => c.id === coinId)
-                    if (!coin || amount <= 0) return null
+                  {getPortfolioHoldings().map(({ coinId, amount, coin, value }) => {
+                    if (!coin) return null
 
-                    const value = amount * coin.price
+                    const percentageOfPortfolio = getPortfolioValue() > 0 
+                      ? (value / getPortfolioValue()) * 100 
+                      : 0
+
                     return (
-                      <div key={coinId} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div key={coinId} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
                         <div className="flex items-center space-x-3">
                           <div className="w-10 h-10 bg-gradient-to-r from-purple-400 to-indigo-500 rounded-lg flex items-center justify-center">
                             <Coins className="w-5 h-5 text-white" />
@@ -233,17 +315,24 @@ export default function TradingScreen() {
                           <div>
                             <h4 className="font-semibold">{coin.symbol}</h4>
                             <p className="text-sm text-gray-600">{coin.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {percentageOfPortfolio.toFixed(1)}% of portfolio
+                            </p>
                           </div>
                         </div>
                         <div className="text-right">
                           <p className="font-semibold">{amount.toFixed(3)} tokens</p>
                           <p className="text-sm text-gray-600">{value.toFixed(3)} ZORA</p>
+                          <p className="text-xs text-gray-500">
+                            @ {coin.price.toFixed(3)} ZORA each
+                          </p>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => {
                               setSelectedCoin(coin)
                               setTradeType("sell")
+                              setTradeAmount(amount.toString())
                             }}
                             className="mt-1"
                           >
@@ -253,17 +342,40 @@ export default function TradingScreen() {
                       </div>
                     )
                   })}
+
                   <div className="border-t pt-4">
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold">Total Portfolio Value:</span>
-                      <span className="font-bold text-lg">{getPortfolioValue().toFixed(3)} ZORA</span>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div className="text-center">
+                        <p className="text-gray-500">Total Holdings</p>
+                        <p className="font-bold text-lg">{getPortfolioHoldings().length}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-gray-500">Portfolio Value</p>
+                        <p className="font-bold text-lg text-green-600">{getPortfolioValue().toFixed(3)} ZORA</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-gray-500">Available VP</p>
+                        <p className="font-bold text-lg text-purple-600">{vibePoints.toFixed(1)}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-gray-500">Est. USD Value</p>
+                        <p className="font-bold text-lg">${(getPortfolioValue() * 2500).toFixed(0)}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="text-center py-8">
                   <Coins className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-600">No holdings yet. Start trading to build your portfolio!</p>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No Holdings Yet</h3>
+                  <p className="text-gray-600 mb-4">Start trading to build your portfolio!</p>
+                  <Button 
+                    onClick={() => setSelectedCoin(zoraCoinMarket[0])}
+                    disabled={zoraCoinMarket.length === 0}
+                    className="bg-gradient-to-r from-purple-500 to-indigo-600"
+                  >
+                    Browse Market
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -279,6 +391,7 @@ export default function TradingScreen() {
                     <div>
                       <h3 className="font-semibold text-gray-900 mb-1">{coin.name}</h3>
                       <p className="text-sm text-gray-600">{coin.exclusiveContent}</p>
+                      <p className="text-xs text-gray-500 mt-1">by {coin.creator}</p>
                     </div>
                     <Badge variant={canAccessContent(coin) ? "default" : "secondary"}>
                       {canAccessContent(coin) ? (
@@ -297,29 +410,53 @@ export default function TradingScreen() {
 
                   {canAccessContent(coin) ? (
                     <div className="bg-green-50 p-4 rounded-lg">
-                      <p className="text-green-800 mb-3">🎉 You have access to this exclusive content!</p>
-                      <Button variant="outline" className="text-green-700 border-green-300 bg-transparent">
-                        View Exclusive Content
-                      </Button>
+                      <p className="text-green-800 mb-3 flex items-center">
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        You have access to this exclusive content!
+                      </p>
+                      <div className="flex space-x-2">
+                        <Button variant="outline" className="text-green-700 border-green-300 bg-transparent">
+                          View Exclusive Content
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => {
+                            setSelectedCoin(coin)
+                            setTradeType("sell")
+                          }}
+                        >
+                          Sell Holdings
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-gray-600 mb-3">Hold at least 0.1 {coin.symbol} to unlock exclusive content.</p>
-                      <p className="text-sm text-gray-500 mb-3">
-                        You need {(0.1 - (userHoldings[coin.id] || 0)).toFixed(3)} more tokens.
+                      <p className="text-gray-600 mb-2">
+                        Hold at least 0.1 {coin.symbol} to unlock exclusive content.
                       </p>
-                      <Button
-                        onClick={() => {
-                          setSelectedCoin(coin)
-                          setTradeType("buy")
-                          setTradeAmount("0.1")
-                        }}
-                        size="sm"
-                        className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700"
-                      >
-                        <DollarSign className="w-4 h-4 mr-1" />
-                        Buy Access (0.1 tokens)
-                      </Button>
+                      <p className="text-sm text-gray-500 mb-3">
+                        You have: {(userHoldings[coin.id] || 0).toFixed(3)} {coin.symbol}
+                        <br />
+                        You need: {Math.max(0, 0.1 - (userHoldings[coin.id] || 0)).toFixed(3)} more tokens
+                      </p>
+                      <div className="flex space-x-2">
+                        <Button
+                          onClick={() => {
+                            setSelectedCoin(coin)
+                            setTradeType("buy")
+                            setTradeAmount(Math.max(0.1, 0.1 - (userHoldings[coin.id] || 0)).toFixed(3))
+                          }}
+                          size="sm"
+                          className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700"
+                        >
+                          <DollarSign className="w-4 h-4 mr-1" />
+                          Buy Access
+                        </Button>
+                        <div className="text-xs text-gray-500 self-center">
+                          Cost: {(Math.max(0.1, 0.1 - (userHoldings[coin.id] || 0)) * coin.price).toFixed(3)} ZORA
+                        </div>
+                      </div>
                     </div>
                   )}
                 </CardContent>

@@ -61,8 +61,8 @@ export default function HomePage() {
 
         {/* Main Content */}
         <main className="max-w-4xl mx-auto px-4 py-6">
-          {/* Deployment Status */}
-          <DeploymentStatus />
+          {/* Deployment Status
+          <DeploymentStatus /> */}
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-6 mb-6">

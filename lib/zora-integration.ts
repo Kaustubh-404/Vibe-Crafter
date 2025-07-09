@@ -203,33 +203,41 @@ export class ZoraCoinsService {
     }
   }
 
-  async tradeCoin(args: TradeCoinArgs): Promise<{ transactionHash: string; amountOut: string }> {
+async tradeCoin(args: TradeCoinArgs): Promise<{ transactionHash: string; amountOut: string }> {
     await this.initializeSDK()
 
     try {
-      const { tradeCoin } = await import("@zoralabs/coins-sdk")
-      const { parseEther, createWalletClient, createPublicClient, http } = await import("viem")
-      const { baseSepolia } = await import("viem/chains")
-      const { privateKeyToAccount } = await import("viem/accounts")
+      // Check if we have wallet access
+      if (typeof window === "undefined" || !window.ethereum) {
+        throw new Error("MetaMask wallet not found")
+      }
 
-      // Set up clients (you'll need to get the private key from wallet)
+      const { tradeCoin } = await import("@zoralabs/coins-sdk")
+      const { createWalletClient, createPublicClient, http, custom } = await import("viem")
+      const { baseSepolia } = await import("viem/chains")
+
+      // Create clients using the connected MetaMask wallet
       const publicClient = createPublicClient({
         chain: baseSepolia,
         transport: http(),
       })
 
-      // Note: In production, you'd get this from the user's wallet
-      // For now, we'll throw an error asking for wallet integration
-      throw new Error("Wallet integration required - please implement wallet connection")
-
-      // This code would work with proper wallet integration:
-      /*
-      const account = privateKeyToAccount("0x..." as any)
-      
+      // Use MetaMask as the wallet client
       const walletClient = createWalletClient({
-        account,
         chain: baseSepolia,
-        transport: http(),
+        transport: custom(window.ethereum),
+      })
+
+      // Get the connected account
+      const accounts = await walletClient.getAddresses()
+      if (accounts.length === 0) {
+        throw new Error("No wallet account connected")
+      }
+
+      const walletClientWithAccount = createWalletClient({
+        chain: baseSepolia,
+        transport: custom(window.ethereum),
+        account: accounts[0] as any, // Type assertion to fix the Account type issue
       })
 
       const tradeParameters = {
@@ -241,26 +249,29 @@ export class ZoraCoinsService {
           : { type: "eth" as const },
         amountIn: BigInt(args.amountIn),
         slippage: args.slippage || 0.05,
-        sender: account.address,
+        sender: accounts[0] as any, // Type assertion here too
         ...(args.tradeReferrer && { tradeReferrer: args.tradeReferrer })
       }
 
+      console.log("🔗 Executing real Zora trade with MetaMask...")
+
       const receipt = await tradeCoin({
         tradeParameters,
-        walletClient,
-        account,
+        walletClient: walletClientWithAccount,
+        account: accounts[0] as any, // Type assertion for account parameter
         publicClient,
       })
 
-      console.log("✅ Trade completed:", receipt.transactionHash)
+      console.log("✅ Real Zora trade completed:", receipt.transactionHash)
+      
       return {
         transactionHash: receipt.transactionHash,
-        amountOut: "0" // You'd extract this from the receipt
+        amountOut: receipt.amountOut || "0"
       }
-      */
+
     } catch (error) {
-      console.error("Failed to trade coin:", error)
-      throw new Error(`Trade failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      console.error("Real Zora trade failed:", error)
+      throw new Error(`Zora trade failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
